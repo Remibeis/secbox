@@ -222,7 +222,7 @@ Source : google, bing, dnsdumpster
 
 ## 🧑‍💻 Auteur
 
-**Remi (PNJ)** — Étudiant YNOV Bordeaux
+**Remi biensoigné** — Étudiant YNOV LILLE 
 
 ---
 
