@@ -89,3 +89,4 @@ EXPOSE 5000
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["web"]
+
