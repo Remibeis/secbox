@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  secbox:
+    build: .
+    image: secbox:latest
+    container_name: secbox
+    ports:
+      - "5000:5000"
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./results:/app/results    # Résultats persistés sur l'hôte
+    cap_add:
+      - NET_RAW                   # Nécessaire pour tcpdump, masscan, nmap SYN
+      - NET_ADMIN                 # Nécessaire pour tshark, captures réseau
+    command: web                  # Changer en "bash-menu" pour le mode terminal

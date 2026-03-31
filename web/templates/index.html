@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚡ SecBox — Security Toolbox</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══ -->
+<header class="header">
+    <div class="header__logo">
+        <span class="header__icon">⚡</span>
+        <h1 class="header__title">SecBox</h1>
+        <span class="header__tag">v1.0</span>
+    </div>
+    <div class="header__status">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">Connecté</span>
+    </div>
+</header>
+
+<!-- ═══ MAIN LAYOUT ═══ -->
+<div class="layout">
+
+    <!-- ─── SIDEBAR: Tool Categories ─── -->
+    <nav class="sidebar">
+        <div class="sidebar__section">
+            <h3 class="sidebar__heading">Outils</h3>
+            {% set categories = {} %}
+            {% for key, tool in tools.items() %}
+                {% if tool.category not in categories %}
+                    {% set _ = categories.update({tool.category: []}) %}
+                {% endif %}
+                {% set _ = categories[tool.category].append((key, tool)) %}
+            {% endfor %}
+
+            {% for category, cat_tools in categories.items() %}
+            <div class="sidebar__category">
+                <span class="sidebar__cat-label">{{ cat_tools[0][1].icon }} {{ category }}</span>
+                {% for key, tool in cat_tools %}
+                <button class="sidebar__btn" data-tool="{{ key }}" onclick="selectTool('{{ key }}')">
+                    {{ tool.name }}
+                </button>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="sidebar__section">
+            <h3 class="sidebar__heading">Historique</h3>
+            <div id="historyList" class="history-list">
+                <span class="history-empty">Aucun scan</span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- ─── MAIN PANEL ─── -->
+    <main class="main">
+
+        <!-- Welcome state -->
+        <div class="welcome" id="welcomePanel">
+            <div class="welcome__art">
+                <pre class="welcome__ascii">
+   _____ ____________  ____  ____  _  __
+  / ___// ____/ ____/ / __ )/ __ \| |/ /
+  \__ \/ __/ / /     / __  / / / /|   / 
+ ___/ / /___/ /___  / /_/ / /_/ //   |  
+/____/_____/\____/ /_____/\____//_/|_|  
+                </pre>
+            </div>
+            <p class="welcome__sub">Sélectionnez un outil dans le panneau de gauche pour commencer.</p>
+            <div class="welcome__stats">
+                <div class="stat-card">
+                    <span class="stat-card__num">12</span>
+                    <span class="stat-card__label">Outils</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-card__num">6</span>
+                    <span class="stat-card__label">Catégories</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-card__num">0</span>
+                    <span class="stat-card__label" id="scanCountLabel">Scans</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tool form panel -->
+        <div class="tool-panel" id="toolPanel" style="display:none;">
+            <div class="tool-panel__header">
+                <span class="tool-panel__icon" id="toolIcon"></span>
+                <div>
+                    <h2 class="tool-panel__name" id="toolName"></h2>
+                    <p class="tool-panel__desc" id="toolDesc"></p>
+                </div>
+            </div>
+
+            <div class="tool-panel__form" id="toolForm">
+                <!-- Fields injected by JS -->
+            </div>
+
+            <div class="tool-panel__actions">
+                <button class="btn btn--primary" id="runBtn" onclick="runScan()">
+                    <span class="btn__icon">▶</span> Lancer le scan
+                </button>
+                <button class="btn btn--ghost" onclick="clearOutput()">Effacer</button>
+            </div>
+
+            <!-- Output terminal -->
+            <div class="terminal" id="terminal" style="display:none;">
+                <div class="terminal__bar">
+                    <span class="terminal__dots">
+                        <i></i><i></i><i></i>
+                    </span>
+                    <span class="terminal__title" id="terminalTitle">Sortie</span>
+                    <button class="terminal__copy" onclick="copyOutput()" title="Copier">📋</button>
+                </div>
+                <pre class="terminal__output" id="terminalOutput"></pre>
+            </div>
+        </div>
+
+    </main>
+</div>
+
+<!-- ═══ SCRIPTS ═══ -->
+<script>
+const TOOLS = {{ tools | tojson }};
+let currentTool = null;
+let scanCount = 0;
+
+// ─── WebSocket ───
+const socket = io();
+
+socket.on("connect", () => {
+    document.getElementById("statusDot").classList.add("status-dot--on");
+    document.getElementById("statusText").textContent = "Connecté";
+});
+
+socket.on("disconnect", () => {
+    document.getElementById("statusDot").classList.remove("status-dot--on");
+    document.getElementById("statusText").textContent = "Déconnecté";
+});
+
+socket.on("scan_started", (data) => {
+    const terminal = document.getElementById("terminal");
+    const output = document.getElementById("terminalOutput");
+    const title = document.getElementById("terminalTitle");
+    terminal.style.display = "block";
+    title.textContent = `${data.tool} — en cours...`;
+    output.innerHTML = `<span class="term-cmd">$ ${escapeHtml(data.command)}</span>\n`;
+    document.getElementById("runBtn").disabled = true;
+    document.getElementById("runBtn").innerHTML = '<span class="btn__spinner"></span> En cours...';
+    addHistory(data);
+});
+
+socket.on("scan_output", (data) => {
+    const output = document.getElementById("terminalOutput");
+    output.innerHTML += escapeHtml(data.line) + "\n";
+    output.scrollTop = output.scrollHeight;
+});
+
+socket.on("scan_complete", (data) => {
+    const title = document.getElementById("terminalTitle");
+    title.textContent = title.textContent.replace("en cours...", "terminé ✓");
+    resetRunBtn();
+    scanCount++;
+    document.querySelector("#scanCountLabel").previousElementSibling.textContent = scanCount;
+});
+
+socket.on("scan_error", (data) => {
+    const output = document.getElementById("terminalOutput");
+    const terminal = document.getElementById("terminal");
+    terminal.style.display = "block";
+    output.innerHTML += `\n<span class="term-err">⚠ Erreur : ${escapeHtml(data.error)}</span>\n`;
+    const title = document.getElementById("terminalTitle");
+    title.textContent = "Erreur ✗";
+    resetRunBtn();
+});
+
+// ─── Tool Selection ───
+function selectTool(toolKey) {
+    currentTool = toolKey;
+    const tool = TOOLS[toolKey];
+
+    document.getElementById("welcomePanel").style.display = "none";
+    document.getElementById("toolPanel").style.display = "block";
+    document.getElementById("toolIcon").textContent = tool.icon;
+    document.getElementById("toolName").textContent = tool.name;
+    document.getElementById("toolDesc").textContent = tool.description;
+
+    // Active state in sidebar
+    document.querySelectorAll(".sidebar__btn").forEach(b => b.classList.remove("sidebar__btn--active"));
+    document.querySelector(`[data-tool="${toolKey}"]`).classList.add("sidebar__btn--active");
+
+    // Build form
+    const form = document.getElementById("toolForm");
+    form.innerHTML = "";
+    tool.fields.forEach(field => {
+        const group = document.createElement("div");
+        group.className = "form-group";
+
+        const label = document.createElement("label");
+        label.className = "form-label";
+        label.textContent = field.label;
+        group.appendChild(label);
+
+        if (field.type === "select") {
+            const select = document.createElement("select");
+            select.className = "form-input";
+            select.name = field.name;
+            field.options.forEach(opt => {
+                const option = document.createElement("option");
+                option.value = opt.value;
+                option.textContent = opt.label;
+                select.appendChild(option);
+            });
+            group.appendChild(select);
+        } else {
+            const input = document.createElement("input");
+            input.type = "text";
+            input.className = "form-input";
+            input.name = field.name;
+            input.placeholder = field.placeholder || "";
+            if (field.required) input.required = true;
+            group.appendChild(input);
+        }
+        form.appendChild(group);
+    });
+}
+
+// ─── Run Scan ───
+function runScan() {
+    if (!currentTool) return;
+
+    const params = {};
+    document.querySelectorAll("#toolForm .form-input").forEach(el => {
+        params[el.name] = el.value.trim();
+    });
+
+    // Client-side validation
+    const tool = TOOLS[currentTool];
+    for (const field of tool.fields) {
+        if (field.required && !params[field.name]) {
+            alert(`Le champ "${field.label}" est requis.`);
+            return;
+        }
+    }
+
+    socket.emit("run_scan", { tool: currentTool, params });
+}
+
+// ─── Helpers ───
+function clearOutput() {
+    const output = document.getElementById("terminalOutput");
+    output.innerHTML = "";
+    document.getElementById("terminal").style.display = "none";
+}
+
+function copyOutput() {
+    const text = document.getElementById("terminalOutput").textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = document.querySelector(".terminal__copy");
+        btn.textContent = "✓";
+        setTimeout(() => btn.textContent = "📋", 1500);
+    });
+}
+
+function resetRunBtn() {
+    const btn = document.getElementById("runBtn");
+    btn.disabled = false;
+    btn.innerHTML = '<span class="btn__icon">▶</span> Lancer le scan';
+}
+
+function addHistory(data) {
+    const list = document.getElementById("historyList");
+    if (list.querySelector(".history-empty")) list.innerHTML = "";
+    const item = document.createElement("div");
+    item.className = "history-item";
+    item.innerHTML = `<span class="history-item__tool">${escapeHtml(data.tool)}</span><span class="history-item__time">${new Date().toLocaleTimeString("fr-FR")}</span>`;
+    list.prepend(item);
+}
+
+function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+}
+</script>
+</body>
+</html>
